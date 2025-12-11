@@ -17,14 +17,25 @@ import timm
 from pytorch_grad_cam import GradCAM
 from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
 from pytorch_grad_cam.utils.image import show_cam_on_image
+from huggingface_hub import hf_hub_download
 
 
 # --------------------------------------------------------------------
-# Paths & device
+# Paths, device & HF config
 # --------------------------------------------------------------------
 BASE_DIR = os.path.dirname(os.path.dirname(__file__))  # .../glaucoma_app
-MODELS_DIR = os.path.join(BASE_DIR, "models")
+MODELS_DIR = os.path.join(BASE_DIR, "models")          # still used for JSON configs
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+HF_REPO_ID = "SushantGiri/glaucoma-ensemble-weights"
+
+HF_MODEL_FILES: Dict[str, str] = {
+    "resnet50": "resnet50_best.pth",
+    "efficientnet_b0": "efficientnet_b0_best.pth",
+    "densenet121": "densenet121_best.pth",
+    "vit_base_patch16_224": "vit_base_patch16_224_best.pth",
+    "swin_base_patch4_window7_224": "swin_base_patch4_window7_224_best.pth",
+}
 
 
 # --------------------------------------------------------------------
@@ -48,6 +59,7 @@ def load_config():
     """
     Load class mapping & preprocessing config if present.
     Fallback: binary classification (Normal / Glaucoma).
+    These files are tiny, so we still keep them in models/.
     """
     class_mapping_path = os.path.join(MODELS_DIR, "class_mapping.json")
     prep_path = os.path.join(MODELS_DIR, "preprocessing.json")
@@ -65,6 +77,26 @@ def load_config():
         prep_cfg = {}
 
     return class_mapping, prep_cfg
+
+
+def load_state_from_hf(model_key: str) -> Dict[str, torch.Tensor]:
+    """
+    Download weights for `model_key` from Hugging Face Hub and return state_dict.
+    Cached locally so subsequent loads are fast.
+    """
+    filename = HF_MODEL_FILES[model_key]
+    weight_path = hf_hub_download(
+        repo_id=HF_REPO_ID,
+        filename=filename,
+        cache_dir=os.path.join(BASE_DIR, "hf_models_cache"),
+    )
+    state_dict = torch.load(weight_path, map_location="cpu")
+
+    # Strip 'module.' if trained with DataParallel
+    if any(k.startswith("module.") for k in state_dict.keys()):
+        state_dict = {k.replace("module.", "", 1): v for k, v in state_dict.items()}
+
+    return state_dict
 
 
 # --------------------------------------------------------------------
@@ -95,13 +127,9 @@ class GlaucomaEnsemble:
     # ------------------------ model loading ------------------------ #
     def _load_cnn_models(self):
         # -------- ResNet50 --------
-        res_path = os.path.join(MODELS_DIR, "resnet50_best.pth")
-        if not os.path.exists(res_path):
-            raise FileNotFoundError("Missing resnet50_best.pth in models/")
-
         res = resnet50(weights=None)
         res.fc = nn.Linear(res.fc.in_features, 2)
-        res.load_state_dict(torch.load(res_path, map_location=DEVICE))
+        res.load_state_dict(load_state_from_hf("resnet50"))
 
         self.models.append(
             ModelInfo(
@@ -113,13 +141,9 @@ class GlaucomaEnsemble:
         )
 
         # -------- EfficientNet-B0 --------
-        eff_path = os.path.join(MODELS_DIR, "efficientnet_b0_best.pth")
-        if not os.path.exists(eff_path):
-            raise FileNotFoundError("Missing efficientnet_b0_best.pth in models/")
-
         eff = efficientnet_b0(weights=None)
         eff.classifier[1] = nn.Linear(eff.classifier[1].in_features, 2)
-        eff.load_state_dict(torch.load(eff_path, map_location=DEVICE))
+        eff.load_state_dict(load_state_from_hf("efficientnet_b0"))
 
         self.models.append(
             ModelInfo(
@@ -131,13 +155,9 @@ class GlaucomaEnsemble:
         )
 
         # -------- DenseNet121 --------
-        den_path = os.path.join(MODELS_DIR, "densenet121_best.pth")
-        if not os.path.exists(den_path):
-            raise FileNotFoundError("Missing densenet121_best.pth in models/")
-
         den = densenet121(weights=None)
         den.classifier = nn.Linear(den.classifier.in_features, 2)
-        den.load_state_dict(torch.load(den_path, map_location=DEVICE))
+        den.load_state_dict(load_state_from_hf("densenet121"))
 
         self.models.append(
             ModelInfo(
@@ -150,12 +170,8 @@ class GlaucomaEnsemble:
 
     def _load_transformer_models(self):
         # -------- ViT-Base --------
-        vit_path = os.path.join(MODELS_DIR, "vit_base_patch16_224_best.pth")
-        if not os.path.exists(vit_path):
-            raise FileNotFoundError("Missing vit_base_patch16_224_best.pth in models/")
-
         vit = timm.create_model("vit_base_patch16_224", pretrained=False, num_classes=2)
-        vit.load_state_dict(torch.load(vit_path, map_location=DEVICE))
+        vit.load_state_dict(load_state_from_hf("vit_base_patch16_224"))
 
         self.models.append(
             ModelInfo(
@@ -167,12 +183,8 @@ class GlaucomaEnsemble:
         )
 
         # -------- Swin-Base --------
-        swin_path = os.path.join(MODELS_DIR, "swin_base_patch4_window7_224_best.pth")
-        if not os.path.exists(swin_path):
-            raise FileNotFoundError("Missing swin_base_patch4_window7_224_best.pth in models/")
-
         swin = timm.create_model("swin_base_patch4_window7_224", pretrained=False, num_classes=2)
-        swin.load_state_dict(torch.load(swin_path, map_location=DEVICE))
+        swin.load_state_dict(load_state_from_hf("swin_base_patch4_window7_224"))
 
         self.models.append(
             ModelInfo(
@@ -240,6 +252,8 @@ class GlaucomaEnsemble:
         Run all 5 models on the image and return:
         - ensemble prediction
         - per-model predictions
+        Structure matches your previous version so Streamlit code
+        does not need to change.
         """
         per_model: Dict[str, Any] = {}
         ensemble_probs: List[np.ndarray] = []
@@ -280,8 +294,8 @@ class GlaucomaEnsemble:
         """
         Generate Grad-CAM overlays for a *subset* of CNN models.
         To keep memory under control on Streamlit Cloud, we only
-        compute Grad-CAM for ResNet50. All 5 models are still used
-        for prediction.
+        compute Grad-CAM for ResNet50 by default. All 5 models are
+        still used for prediction.
         """
         os.makedirs(output_dir, exist_ok=True)
 
@@ -294,7 +308,7 @@ class GlaucomaEnsemble:
 
         saved_paths: Dict[str, str] = {}
 
-        cam_model_names = {"resnet50"}  # add "efficientnet_b0" if you want 2 heatmaps
+        cam_model_names = {"resnet50"}  # add "efficientnet_b0" here if you want two heatmaps
 
         for mi in self.models:
             if mi.name not in cam_model_names:

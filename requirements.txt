@@ -13,6 +13,8 @@ numpy<2.0.0
 matplotlib
 albumentations
 reportlab
+huggingface_hub
+
 
 # Gemini
 google-generativeai
