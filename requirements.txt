@@ -9,3 +9,4 @@ matplotlib
 albumentations
 reportlab
 google-generativeai
+pytorch-grad-cam
