@@ -543,11 +543,18 @@ if uploaded_file is not None and st.session_state.run_requested:
                 per_model = results["per_model"]
 
         # 🔹 Step 2: Grad-CAM (optional)
-        cam_paths = {}
+                cam_paths = {}
         if generate_gradcam:
             with status_placeholder.container():
                 with st.spinner("🧠 Generating Grad-CAM heatmaps…"):
-                    cam_paths = ensemble.gradcam_for_cnn(image, GRADCAM_DIR)
+                    try:
+                        cam_paths = ensemble.gradcam_for_cnn(image, GRADCAM_DIR)
+                    except Exception as e:
+                        cam_paths = {}
+                        st.warning(
+                            f"Grad-CAM generation failed and was skipped: {e}"
+                        )
+
 
         # Small cleanup after heavy steps
         gc.collect()

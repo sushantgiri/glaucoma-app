@@ -262,8 +262,9 @@ class GlaucomaEnsemble:
         Generate Grad-CAM overlays for CNN models (ResNet, EfficientNet, DenseNet).
         Returns a dict: {model_name: saved_image_path}
 
-        Uses GradCAM as a context manager so hooks are removed after each run.
-        This avoids memory leaks when running multiple assessments.
+        Uses explicit cleanup of GradCAM internals so hooks don't leak,
+        and avoids newer arguments (like use_cuda) that may not exist
+        in the installed version.
         """
         os.makedirs(output_dir, exist_ok=True)
 
@@ -280,28 +281,37 @@ class GlaucomaEnsemble:
 
             input_tensor = self._preprocess(pil_img, mi.input_size).to(DEVICE)
 
-            # NOTE: your installed pytorch-grad-cam does NOT accept use_cuda,
-            # so we only pass model and target_layers.
-            with GradCAM(
-                model=mi.model,
-                target_layers=[mi.target_layer],
-            ) as cam:
+            cam = None
+            try:
+                # NOTE: do NOT pass use_cuda here – your version doesn't support it.
+                cam = GradCAM(
+                    model=mi.model,
+                    target_layers=[mi.target_layer],
+                )
+
                 # here we target class 1 ("Glaucoma"); you can change to predicted class
                 targets = [ClassifierOutputTarget(1)]
                 grayscale_cam = cam(input_tensor=input_tensor, targets=targets)[0]
 
-            img_resized = cv2.resize(img_rgb, (mi.input_size, mi.input_size))
-            cam_img = show_cam_on_image(img_resized, grayscale_cam, use_rgb=True)
+                img_resized = cv2.resize(img_rgb, (mi.input_size, mi.input_size))
+                cam_img = show_cam_on_image(img_resized, grayscale_cam, use_rgb=True)
 
-            filename = f"{mi.name}_gradcam.png"
-            save_path = os.path.join(output_dir, filename)
-            Image.fromarray(cam_img).save(save_path)
-            saved_paths[mi.name] = save_path
+                filename = f"{mi.name}_gradcam.png"
+                save_path = os.path.join(output_dir, filename)
+                Image.fromarray(cam_img).save(save_path)
+                saved_paths[mi.name] = save_path
 
-            # free tensors & CAM
-            del input_tensor, grayscale_cam, cam_img
-            gc.collect()
-            if DEVICE.type == "cuda":
-                torch.cuda.empty_cache()
+            finally:
+                # explicit cleanup: release hooks & tensors if they exist
+                try:
+                    if cam is not None and hasattr(cam, "activations_and_grads"):
+                        cam.activations_and_grads.release()
+                except Exception:
+                    pass
+
+                del cam, input_tensor
+                gc.collect()
+                if DEVICE.type == "cuda":
+                    torch.cuda.empty_cache()
 
         return saved_paths
