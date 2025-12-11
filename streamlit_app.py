@@ -542,8 +542,8 @@ if uploaded_file is not None and st.session_state.run_requested:
                 ensemble_result = results["ensemble"]
                 per_model = results["per_model"]
 
-        # 🔹 Step 2: Grad-CAM (optional)
-                cam_paths = {}
+        # 🔹 Step 2: Grad-CAM (optional) – now only on ResNet50, lighter
+        cam_paths = {}
         if generate_gradcam:
             with status_placeholder.container():
                 with st.spinner("🧠 Generating Grad-CAM heatmaps…"):
@@ -554,7 +554,6 @@ if uploaded_file is not None and st.session_state.run_requested:
                         st.warning(
                             f"Grad-CAM generation failed and was skipped: {e}"
                         )
-
 
         # Small cleanup after heavy steps
         gc.collect()
@@ -687,7 +686,7 @@ if uploaded_file is not None and st.session_state.run_requested:
             st.markdown(
                 """
                 <p class="gl-subtitle">
-                These Grad-CAM overlays highlight regions that contributed most strongly to each model's prediction.
+                These Grad-CAM overlays highlight regions that contributed most strongly to the CNN prediction.
                 Warmer colors indicate higher attention.
                 </p>
                 """,
@@ -705,7 +704,8 @@ if uploaded_file is not None and st.session_state.run_requested:
                         )
             else:
                 st.warning(
-                    "Grad-CAM generation was disabled. Enable it in Advanced options before running the assessment."
+                    "Grad-CAM generation was disabled or failed. "
+                    "Enable it in Advanced options before running the assessment."
                 )
 
             st.markdown("</div>", unsafe_allow_html=True)

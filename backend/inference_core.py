@@ -56,7 +56,6 @@ def load_config():
         with open(class_mapping_path, "r") as f:
             class_mapping = json.load(f)
     else:
-        # Default labels if json not provided
         class_mapping = {"0": "Normal", "1": "Glaucoma"}
 
     if os.path.exists(prep_path):
@@ -163,7 +162,7 @@ class GlaucomaEnsemble:
                 name="vit_base_patch16_224",
                 model=vit,
                 input_size=224,
-                target_layer=None,   # no Grad-CAM / attention here for now
+                target_layer=None,   # no Grad-CAM / attention for now
             )
         )
 
@@ -199,7 +198,6 @@ class GlaucomaEnsemble:
         img_np = cv2.resize(img_np, (input_size, input_size))
         img_np = img_np.astype(np.float32) / 255.0   # scale to [0,1]
 
-        # You can customise these from preprocessing.json if needed
         mean = [0.485, 0.456, 0.406]
         std = [0.229, 0.224, 0.225]
 
@@ -211,6 +209,29 @@ class GlaucomaEnsemble:
         )
         tensor = transform(img_np)  # (C, H, W)
         return tensor.unsqueeze(0)  # (1, C, H, W)
+
+    def _preprocess_for_cam(self, pil_img: Image.Image, side: int = 384) -> torch.Tensor:
+        """
+        Lighter preprocessing just for Grad-CAM visualization.
+        Uses a smaller resolution (default 384) to save memory.
+        """
+        img = pil_img.convert("RGB")
+        img_np = np.array(img)
+        img_np = apply_clahe_rgb(img_np)
+        img_np = cv2.resize(img_np, (side, side))
+        img_np = img_np.astype(np.float32) / 255.0
+
+        mean = [0.485, 0.456, 0.406]
+        std = [0.229, 0.224, 0.225]
+
+        transform = transforms.Compose(
+            [
+                transforms.ToTensor(),
+                transforms.Normalize(mean=mean, std=std),
+            ]
+        )
+        tensor = transform(img_np)
+        return tensor.unsqueeze(0)
 
     # ------------------------ prediction / ensemble ------------------------ #
     @torch.no_grad()
@@ -236,14 +257,12 @@ class GlaucomaEnsemble:
                 "pred_label": self.class_mapping[str(pred_idx)],
             }
 
-            # free tensor
             del x, logits
             gc.collect()
 
         ensemble_probs = np.mean(np.stack(ensemble_probs, axis=0), axis=0)
         ensemble_idx = int(np.argmax(ensemble_probs))
 
-        # light cleanup
         if DEVICE.type == "cuda":
             torch.cuda.empty_cache()
 
@@ -256,45 +275,44 @@ class GlaucomaEnsemble:
             "per_model": per_model,
         }
 
-     # ------------------------ Grad-CAM for CNNs ------------------------ #
+    # ------------------------ Grad-CAM for CNNs ------------------------ #
     def gradcam_for_cnn(self, pil_img: Image.Image, output_dir: str) -> Dict[str, str]:
         """
-        Generate Grad-CAM overlays for CNN models (ResNet, EfficientNet, DenseNet).
-        Returns a dict: {model_name: saved_image_path}
-
-        Uses explicit cleanup of GradCAM internals so hooks don't leak,
-        and avoids newer arguments (like use_cuda) that may not exist
-        in the installed version.
+        Generate Grad-CAM overlays for a *subset* of CNN models.
+        To keep memory under control on Streamlit Cloud, we only
+        compute Grad-CAM for ResNet50. All 5 models are still used
+        for prediction.
         """
         os.makedirs(output_dir, exist_ok=True)
 
+        cam_side = 384
+
         img_rgb = np.array(pil_img.convert("RGB"))
         img_rgb = apply_clahe_rgb(img_rgb)
+        img_rgb = cv2.resize(img_rgb, (cam_side, cam_side))
         img_rgb = img_rgb.astype(np.float32) / 255.0  # [0,1]
 
         saved_paths: Dict[str, str] = {}
 
+        cam_model_names = {"resnet50"}  # add "efficientnet_b0" if you want 2 heatmaps
+
         for mi in self.models:
-            if mi.target_layer is None:
-                # skip ViT & Swin here
+            if mi.name not in cam_model_names:
                 continue
 
-            input_tensor = self._preprocess(pil_img, mi.input_size).to(DEVICE)
+            input_tensor = self._preprocess_for_cam(pil_img, side=cam_side).to(DEVICE)
 
             cam = None
             try:
-                # NOTE: do NOT pass use_cuda here – your version doesn't support it.
                 cam = GradCAM(
                     model=mi.model,
                     target_layers=[mi.target_layer],
                 )
 
-                # here we target class 1 ("Glaucoma"); you can change to predicted class
-                targets = [ClassifierOutputTarget(1)]
+                targets = [ClassifierOutputTarget(1)]  # class 1 = glaucoma
                 grayscale_cam = cam(input_tensor=input_tensor, targets=targets)[0]
 
-                img_resized = cv2.resize(img_rgb, (mi.input_size, mi.input_size))
-                cam_img = show_cam_on_image(img_resized, grayscale_cam, use_rgb=True)
+                cam_img = show_cam_on_image(img_rgb, grayscale_cam, use_rgb=True)
 
                 filename = f"{mi.name}_gradcam.png"
                 save_path = os.path.join(output_dir, filename)
@@ -302,7 +320,6 @@ class GlaucomaEnsemble:
                 saved_paths[mi.name] = save_path
 
             finally:
-                # explicit cleanup: release hooks & tensors if they exist
                 try:
                     if cam is not None and hasattr(cam, "activations_and_grads"):
                         cam.activations_and_grads.release()
