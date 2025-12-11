@@ -1,12 +1,25 @@
-streamlit
+# --- Core app ---
+streamlit==1.50.0
+
+# --- Deep learning stack (pinned to avoid NumPy 2.x issues) ---
+numpy<2.0.0          # e.g. 1.26.x, compatible with current PyTorch wheels
 torch==2.2.1
 torchvision==0.17.1
-timm
-opencv-python-headless
+timm==0.9.16                  # fine unpinned with torch 2.2.1
+
+# --- Image / CV utilities ---
+opencv-python-headless<4.12
 Pillow
-numpy
+
+# --- Plotting & augmentations ---
 matplotlib
 albumentations
+
+# --- PDF export ---
 reportlab
+
+# --- Gemini / VLM explainer ---
 google-generativeai
+
+# --- Grad-CAM from GitHub ---
 grad-cam @ git+https://github.com/jacobgil/pytorch-grad-cam.git#egg=grad-cam
