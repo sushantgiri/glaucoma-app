@@ -256,7 +256,7 @@ class GlaucomaEnsemble:
             "per_model": per_model,
         }
 
-    # ------------------------ Grad-CAM for CNNs ------------------------ #
+     # ------------------------ Grad-CAM for CNNs ------------------------ #
     def gradcam_for_cnn(self, pil_img: Image.Image, output_dir: str) -> Dict[str, str]:
         """
         Generate Grad-CAM overlays for CNN models (ResNet, EfficientNet, DenseNet).
@@ -280,12 +280,11 @@ class GlaucomaEnsemble:
 
             input_tensor = self._preprocess(pil_img, mi.input_size).to(DEVICE)
 
-            use_cuda = DEVICE.type == "cuda"
-            # ✅ Context manager removes hooks when exiting
+            # NOTE: your installed pytorch-grad-cam does NOT accept use_cuda,
+            # so we only pass model and target_layers.
             with GradCAM(
                 model=mi.model,
                 target_layers=[mi.target_layer],
-                use_cuda=use_cuda,
             ) as cam:
                 # here we target class 1 ("Glaucoma"); you can change to predicted class
                 targets = [ClassifierOutputTarget(1)]
@@ -302,7 +301,7 @@ class GlaucomaEnsemble:
             # free tensors & CAM
             del input_tensor, grayscale_cam, cam_img
             gc.collect()
-            if use_cuda:
+            if DEVICE.type == "cuda":
                 torch.cuda.empty_cache()
 
         return saved_paths
