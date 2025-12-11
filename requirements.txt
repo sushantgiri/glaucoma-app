@@ -1,12 +1,12 @@
 streamlit
-torch
-torchvision
+torch==2.2.1
+torchvision==0.17.1
 timm
-opencv-python
+opencv-python-headless
 Pillow
 numpy
 matplotlib
 albumentations
 reportlab
 google-generativeai
-pytorch-grad-cam
+grad-cam @ git+https://github.com/jacobgil/pytorch-grad-cam.git#egg=grad-cam

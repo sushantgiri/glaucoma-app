@@ -8,6 +8,18 @@ from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 
 # -------------------------------------------------------------------
+# Session state flags
+# -------------------------------------------------------------------
+if "is_processing" not in st.session_state:
+    st.session_state.is_processing = False
+
+if "run_requested" not in st.session_state:
+    st.session_state.run_requested = False
+
+if "gemini_error" not in st.session_state:
+    st.session_state.gemini_error = None
+
+# -------------------------------------------------------------------
 # Page config & global styling
 # -------------------------------------------------------------------
 st.set_page_config(
@@ -154,7 +166,6 @@ st.markdown(
         letter-spacing: 0.1em;
     }
     
-    /* Image preview container styling (smaller, professional) */
     .gl-image-preview {
         background: linear-gradient(135deg, rgba(15, 23, 42, 0.9) 0%, rgba(2, 6, 23, 0.95) 100%);
         border: 1px solid rgba(20, 184, 166, 0.2);
@@ -175,7 +186,6 @@ st.markdown(
         border-top: 1px solid rgba(51, 65, 85, 0.5);
     }
     
-    /* Keep Streamlit images rounded but avoid full-width stretch */
     [data-testid="stImage"] img {
         border-radius: 0.75rem;
         display: block;
@@ -291,20 +301,26 @@ def get_ensemble():
 
 @st.cache_resource(show_spinner=False)
 def get_gemini() -> Optional[object]:
+    """
+    Try to construct GeminiExplainer.
+
+    If it fails (missing key, missing package, etc.), store the error
+    message in st.session_state.gemini_error and return None.
+    """
     try:
         from backend.gemini_explainer import GeminiExplainer
-        return GeminiExplainer()
-    except Exception:
+        explainer = GeminiExplainer()
+        st.session_state.gemini_error = None
+        return explainer
+    except Exception as e:
+        # Root cause of "narrative explanation unavailable" when checkbox is ON
+        st.session_state.gemini_error = str(e)
         return None
 
-# Paths + preloaded models
+# Paths
 BASE_DIR = os.path.dirname(__file__)
 GRADCAM_DIR = os.path.join(BASE_DIR, "gradcams")
 os.makedirs(GRADCAM_DIR, exist_ok=True)
-
-# 🔹 Preload ensemble and Gemini once per session
-ensemble = get_ensemble()
-gemini = get_gemini()
 
 # -------------------------------------------------------------------
 # Helper functions
@@ -447,19 +463,29 @@ with left_col:
         "Generate Grad-CAM heatmaps (slower)", value=True
     )
     generate_gemini = st.checkbox(
-        "Generate AI narrative explanation (slower)", value=False
+    "Generate AI narrative explanation (slower)",
+    value=True,
+    key="generate_gemini",
     )
 
-    analyze_clicked = st.button(
-        "🔬 Run Assessment", type="primary", use_container_width=True
+    def request_run():
+        if not st.session_state.is_processing:
+            st.session_state.run_requested = True
+
+    analyze_button = st.button(
+        "🔬 Run Assessment",
+        type="primary",
+        use_container_width=True,
+        on_click=request_run,
+        disabled=st.session_state.is_processing,
     )
+
     status_placeholder = st.empty()
 
 with right_col:
     if uploaded_file is not None:
         image = Image.open(uploaded_file).convert("RGB")
         st.markdown('<div class="gl-image-preview">', unsafe_allow_html=True)
-        # Smaller, professional preview
         st.image(image, width=420)
         st.markdown(
             '<p class="gl-image-caption">📷 Uploaded fundus image</p>',
@@ -483,8 +509,16 @@ with right_col:
 # -------------------------------------------------------------------
 # Run models and render tabs
 # -------------------------------------------------------------------
-if uploaded_file is not None and analyze_clicked:
-    # 🔹 Step 1: prediction (fast)
+if uploaded_file is not None and st.session_state.run_requested:
+    st.session_state.is_processing = True
+
+    # 🔹 Step 0: ensure models are loaded (cached, first time only)
+    with status_placeholder.container():
+        with st.spinner("🧠 Loading models (first time may take a bit)…"):
+            ensemble = get_ensemble()
+            gemini = get_gemini()
+
+    # 🔹 Step 1: prediction
     with status_placeholder.container():
         with st.spinner("🔄 Analysing image with ensemble…"):
             results = ensemble.predict(image)
@@ -509,6 +543,7 @@ if uploaded_file is not None and analyze_clicked:
                         ensemble_result, per_model, cam_paths, vit_rollout_path=""
                     )
                 except Exception as e:
+                    st.session_state.gemini_error = str(e)
                     st.warning(f"Gemini explanation failed: {e}")
 
     status_placeholder.empty()
@@ -573,11 +608,24 @@ if uploaded_file is not None and analyze_clicked:
                     f"(Normal: `{p0:.3f}`, Glaucoma: `{p1:.3f}`)"
                 )
 
+        # 🔹 AI Narrative section (always visible)
         st.markdown('<h3 class="gl-section-title">AI Narrative Explanation</h3>', unsafe_allow_html=True)
+
         if gemini_report:
+            # ✅ Narrative successfully generated
             st.write(gemini_report)
         else:
-            st.info("Narrative explanation unavailable or skipped. Enable it in Advanced options to generate.")
+            # Your preferred message
+            st.info(
+                "Narrative explanation unavailable or skipped. "
+                "Enable it in Advanced options to generate."
+            )
+            # Extra technical hint if something actually broke
+            if generate_gemini and st.session_state.gemini_error:
+                st.caption(
+                    f"Technical note: Gemini could not be used because of: "
+                    f"`{st.session_state.gemini_error}`"
+                )
 
         st.markdown(
             '<p class="gl-disclaimer">'
@@ -637,5 +685,9 @@ if uploaded_file is not None and analyze_clicked:
 
         st.markdown("</div>", unsafe_allow_html=True)
 
-elif uploaded_file is None and not analyze_clicked:
+    # ✅ Reset flags after finishing
+    st.session_state.is_processing = False
+    st.session_state.run_requested = False
+
+elif uploaded_file is None and not st.session_state.run_requested:
     st.info("👆 Upload a fundus photograph to begin the assessment.")
