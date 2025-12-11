@@ -2,6 +2,7 @@ import os
 import json
 from typing import Dict, Any, List
 
+import gc
 import cv2
 import torch
 import torch.nn as nn
@@ -162,7 +163,7 @@ class GlaucomaEnsemble:
                 name="vit_base_patch16_224",
                 model=vit,
                 input_size=224,
-                target_layer=None,   # no Grad-CAM / attention for now
+                target_layer=None,   # no Grad-CAM / attention here for now
             )
         )
 
@@ -235,8 +236,16 @@ class GlaucomaEnsemble:
                 "pred_label": self.class_mapping[str(pred_idx)],
             }
 
+            # free tensor
+            del x, logits
+            gc.collect()
+
         ensemble_probs = np.mean(np.stack(ensemble_probs, axis=0), axis=0)
         ensemble_idx = int(np.argmax(ensemble_probs))
+
+        # light cleanup
+        if DEVICE.type == "cuda":
+            torch.cuda.empty_cache()
 
         return {
             "ensemble": {
@@ -252,6 +261,9 @@ class GlaucomaEnsemble:
         """
         Generate Grad-CAM overlays for CNN models (ResNet, EfficientNet, DenseNet).
         Returns a dict: {model_name: saved_image_path}
+
+        Uses GradCAM as a context manager so hooks are removed after each run.
+        This avoids memory leaks when running multiple assessments.
         """
         os.makedirs(output_dir, exist_ok=True)
 
@@ -268,14 +280,16 @@ class GlaucomaEnsemble:
 
             input_tensor = self._preprocess(pil_img, mi.input_size).to(DEVICE)
 
-            cam = GradCAM(
+            use_cuda = DEVICE.type == "cuda"
+            # ✅ Context manager removes hooks when exiting
+            with GradCAM(
                 model=mi.model,
                 target_layers=[mi.target_layer],
-            )
-
-            # here we target class 1 ("Glaucoma"); you can change to predicted class
-            targets = [ClassifierOutputTarget(1)]
-            grayscale_cam = cam(input_tensor=input_tensor, targets=targets)[0]
+                use_cuda=use_cuda,
+            ) as cam:
+                # here we target class 1 ("Glaucoma"); you can change to predicted class
+                targets = [ClassifierOutputTarget(1)]
+                grayscale_cam = cam(input_tensor=input_tensor, targets=targets)[0]
 
             img_resized = cv2.resize(img_rgb, (mi.input_size, mi.input_size))
             cam_img = show_cam_on_image(img_resized, grayscale_cam, use_rgb=True)
@@ -284,5 +298,11 @@ class GlaucomaEnsemble:
             save_path = os.path.join(output_dir, filename)
             Image.fromarray(cam_img).save(save_path)
             saved_paths[mi.name] = save_path
+
+            # free tensors & CAM
+            del input_tensor, grayscale_cam, cam_img
+            gc.collect()
+            if use_cuda:
+                torch.cuda.empty_cache()
 
         return saved_paths

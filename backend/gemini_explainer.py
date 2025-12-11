@@ -15,7 +15,8 @@ class GeminiExplainer:
         api_key = os.getenv(api_key_env)
         if not api_key:
             raise RuntimeError(
-                f"{api_key_env} not set. Please export your Gemini API key."
+                f"{api_key_env} not set. Please export your Gemini API key "
+                "or add it to Streamlit Secrets as GOOGLE_API_KEY."
             )
 
         # Configure Gemini client
@@ -46,7 +47,6 @@ class GeminiExplainer:
                 "Check your API key/project in Google AI Studio."
             )
 
-        # Prefer gemini* models if present, otherwise just use the first one
         preferred = [n for n in text_models if "gemini" in n.lower()]
         if preferred:
             return preferred[0]

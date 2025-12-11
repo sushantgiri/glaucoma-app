@@ -1,4 +1,5 @@
 import os
+import gc
 from io import BytesIO
 from typing import Dict, Optional
 
@@ -6,6 +7,7 @@ import streamlit as st
 from PIL import Image
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
+import torch
 
 # -------------------------------------------------------------------
 # Session state flags
@@ -27,6 +29,10 @@ st.set_page_config(
     page_icon="👁️",
     layout="wide",
 )
+
+# 🔑 Load GOOGLE_API_KEY from Streamlit secrets if present
+if "GOOGLE_API_KEY" in st.secrets and not os.getenv("GOOGLE_API_KEY"):
+    os.environ["GOOGLE_API_KEY"] = st.secrets["GOOGLE_API_KEY"]
 
 # Enhanced Clinical-themed dark UI (Design 2: Dark Medical Dashboard style)
 st.markdown(
@@ -543,6 +549,11 @@ if uploaded_file is not None and st.session_state.run_requested:
                 with st.spinner("🧠 Generating Grad-CAM heatmaps…"):
                     cam_paths = ensemble.gradcam_for_cnn(image, GRADCAM_DIR)
 
+        # Small cleanup after heavy steps
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
         # 🔹 Step 3: Gemini narrative (optional)
         text_report = build_text_report(ensemble_result, per_model)
         gemini_report = None
@@ -683,7 +694,7 @@ if uploaded_file is not None and st.session_state.run_requested:
                         st.image(
                             path,
                             caption=f"{name}",
-                            use_column_width=True,
+                            use_container_width=True,
                         )
             else:
                 st.warning(
@@ -727,9 +738,12 @@ if uploaded_file is not None and st.session_state.run_requested:
             st.markdown("</div>", unsafe_allow_html=True)
 
     finally:
-        # ✅ Always reset, even if something errors
+        # ✅ Always reset + clean up, even on error
         st.session_state.is_processing = False
         st.session_state.run_requested = False
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
 elif uploaded_file is None and not st.session_state.run_requested:
     st.info("👆 Upload a fundus photograph to begin the assessment.")
