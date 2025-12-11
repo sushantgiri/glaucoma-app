@@ -1,0 +1,11 @@
+streamlit
+torch
+torchvision
+timm
+opencv-python
+Pillow
+numpy
+matplotlib
+albumentations
+reportlab
+google-generativeai
