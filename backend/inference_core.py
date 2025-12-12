@@ -83,13 +83,23 @@ def load_state_from_hf(model_key: str) -> Dict[str, torch.Tensor]:
     """
     Download weights for `model_key` from Hugging Face Hub and return state_dict.
     Cached locally so subsequent loads are fast.
+    Requires HF_TOKEN to be set in environment (Streamlit/Spaces secret).
     """
     filename = HF_MODEL_FILES[model_key]
+
+    hf_token = os.getenv("HF_TOKEN")
+    if hf_token is None:
+        raise RuntimeError(
+            "HF_TOKEN not set. Please add HF_TOKEN to your Streamlit/Spaces secrets."
+        )
+
     weight_path = hf_hub_download(
         repo_id=HF_REPO_ID,
         filename=filename,
+        token=hf_token,  # 🔑 use your secret here
         cache_dir=os.path.join(BASE_DIR, "hf_models_cache"),
     )
+
     state_dict = torch.load(weight_path, map_location="cpu")
 
     # Strip 'module.' if trained with DataParallel
@@ -97,6 +107,7 @@ def load_state_from_hf(model_key: str) -> Dict[str, torch.Tensor]:
         state_dict = {k.replace("module.", "", 1): v for k, v in state_dict.items()}
 
     return state_dict
+
 
 
 # --------------------------------------------------------------------
