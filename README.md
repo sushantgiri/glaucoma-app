@@ -167,5 +167,5 @@ Do not use it for clinical decisions.
 ## 📬 **Contact**
 **Sushant Giri**  
 Senior Mobile App Developer • AI/ML Researcher  
-📧 sushantgiri.dev@gmail.com  
+📧 sushantgiri38@gmail.com  
 🔗 LinkedIn: https://www.linkedin.com/in/sushantgiri
