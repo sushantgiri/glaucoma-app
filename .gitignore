@@ -5,3 +5,7 @@ __pycache__/
 attn_maps/
 gradcams/
 models/*.pth
+
+# Streamlit secrets
+.streamlit/secrets.toml
+.streamlit/secrets.toml.*

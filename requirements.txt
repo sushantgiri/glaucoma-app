@@ -1,23 +1,24 @@
 # Core app
 streamlit==1.50.0
 
-# PyTorch stack – versions that support Python 3.13
-torch==2.9.1
-torchvision==0.24.1
+# PyTorch stack
+torch==2.2.2
+torchvision==0.17.2
+
 
 # Vision / ML utils
-timm
 opencv-python-headless
 Pillow
 numpy<2.0.0
-matplotlib
-albumentations
-reportlab
-huggingface_hub
 
+# PDF export
+reportlab
+
+# Hugging Face weights
+huggingface_hub
 
 # Gemini
 google-generativeai
 
-# Grad-CAM (from GitHub, installs as `grad-cam`, import is still `pytorch_grad_cam`)
+# Grad-CAM (installs as `grad-cam`, import is `pytorch_grad_cam`)
 grad-cam @ git+https://github.com/jacobgil/pytorch-grad-cam.git#egg=grad-cam
