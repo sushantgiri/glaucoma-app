@@ -1,3 +1,4 @@
+# streamlit_app.py
 import os
 import gc
 from io import BytesIO
@@ -8,6 +9,7 @@ from PIL import Image
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 import torch
+
 from backend.report_pdf import generate_report_pdf_like_template
 
 
@@ -57,11 +59,10 @@ def main():
         if "HF_TOKEN" in st.secrets and not os.getenv("HF_TOKEN"):
             os.environ["HF_TOKEN"] = st.secrets["HF_TOKEN"]
     except Exception:
-        # Local run without secrets.toml should not crash the UI
         pass
 
     # -------------------------------------------------------------------
-    # Styling (unchanged)
+    # Styling
     # -------------------------------------------------------------------
     st.markdown(
         """
@@ -139,12 +140,15 @@ def main():
             text-transform: uppercase; letter-spacing: 0.1em;
         }
 
+        /* Improved preview container */
         .gl-image-preview {
             background: linear-gradient(135deg, rgba(15, 23, 42, 0.9) 0%, rgba(2, 6, 23, 0.95) 100%);
             border: 1px solid rgba(20, 184, 166, 0.2);
             border-radius: 1rem; padding: 1rem;
             box-shadow: 0 20px 50px rgba(0, 0, 0, 0.4), 0 0 40px rgba(20, 184, 166, 0.05);
-            overflow: hidden; max-width: 480px; margin: 0 auto;
+            overflow: hidden;
+            max-width: 100%;
+            margin: 0;
         }
         .gl-image-caption {
             text-align: center; color: #64748b; font-size: 0.85rem;
@@ -315,25 +319,26 @@ def main():
             help="Supported formats: JPG, JPEG, PNG",
         )
 
-        st.markdown("##### ⚙️ Advanced options")
-        # ✅ DO NOT CHANGE these defaults (as per your instruction)
-        generate_gradcam = st.checkbox("Generate Grad-CAM heatmap (slower)", value=True)
-        generate_gemini = st.checkbox(
-            "Generate AI narrative explanation (slower)",
-            value=True,
-            key="generate_gemini",
-        )
+        # Requirement change: always enabled (no UI)
+        generate_gradcam = True
+        generate_gemini = True
 
         def request_run():
-            if not st.session_state.is_processing:
-                st.session_state.run_requested = True
+            # Disable immediately to prevent re-trigger spam
+            if st.session_state.is_processing:
+                return
+            if uploaded_file is None:
+                return
+            st.session_state.is_processing = True
+            st.session_state.run_requested = True
+            st.session_state.gemini_error = None
 
         st.button(
             "🔬 Run Assessment",
             type="primary",
             use_container_width=True,
             on_click=request_run,
-            disabled=st.session_state.is_processing,
+            disabled=st.session_state.is_processing or (uploaded_file is None),
         )
 
         status_placeholder = st.empty()
@@ -342,10 +347,12 @@ def main():
         image: Optional[Image.Image] = None
         if uploaded_file is not None:
             image = Image.open(uploaded_file).convert("RGB")
+            filename = getattr(uploaded_file, "name", "Uploaded image")
+
             st.markdown('<div class="gl-image-preview">', unsafe_allow_html=True)
-            st.image(image, width=420)
+            st.image(image, use_container_width=True)
             st.markdown(
-                '<p class="gl-image-caption">📷 Uploaded fundus image</p>',
+                f'<p class="gl-image-caption">📷 {filename}</p>',
                 unsafe_allow_html=True,
             )
             st.markdown("</div>", unsafe_allow_html=True)
@@ -367,11 +374,15 @@ def main():
     # Run inference and render tabs
     # -------------------------------------------------------------------
     if image is not None and st.session_state.run_requested:
-        st.session_state.is_processing = True
-        progress = st.progress(0)
+        # Enhanced progress UI
+        progress_wrap = st.empty()
+        progress_label = st.empty()
+        with progress_wrap.container():
+            progress = st.progress(0)
 
         try:
             # Step 0: Load model + Gemini (cached)
+            progress_label.markdown("**🧠 Loading models…**")
             with status_placeholder.container():
                 with st.spinner("🧠 Loading DenseNet121 (first time may take a bit)…"):
                     model = load_model_cached()
@@ -379,18 +390,19 @@ def main():
             progress.progress(25)
 
             # Step 1: Prediction
+            progress_label.markdown("**🔄 Running DenseNet121 inference…**")
             with status_placeholder.container():
                 with st.spinner("🔄 Analysing image with DenseNet121…"):
                     result = model.predict(image)
             progress.progress(55)
 
-            # Step 2: Grad-CAM (optional)
+            # Step 2: Grad-CAM
             cam_path = None
             if generate_gradcam:
+                progress_label.markdown("**🧠 Generating Grad-CAM…**")
                 with status_placeholder.container():
                     with st.spinner("🧠 Generating DenseNet121 Grad-CAM…"):
                         try:
-                            # ✅ Pass predicted class to avoid extra forward
                             cam_path = model.gradcam(
                                 image,
                                 GRADCAM_DIR,
@@ -405,10 +417,11 @@ def main():
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
-            # Step 3: Gemini narrative (optional)
+            # Step 3: Gemini narrative
             text_report = build_text_report(result)
             gemini_report = None
             if generate_gemini and gemini is not None:
+                progress_label.markdown("**💬 Writing narrative explanation…**")
                 with status_placeholder.container():
                     with st.spinner("💬 Generating AI narrative explanation…"):
                         try:
@@ -418,6 +431,10 @@ def main():
                             st.warning(f"Gemini explanation failed: {e}")
 
             progress.progress(100)
+            progress_label.markdown("**✅ Completed**")
+            st.success("Assessment complete.")
+            progress_wrap.empty()
+            progress_label.empty()
             status_placeholder.empty()
 
             p0, p1 = result["probs"]
@@ -469,10 +486,8 @@ def main():
                 if gemini_report:
                     st.write(gemini_report)
                 else:
-                    st.info(
-                        "Narrative explanation unavailable or skipped. Enable it in Advanced options to generate."
-                    )
-                    if generate_gemini and st.session_state.gemini_error:
+                    st.info("Narrative explanation unavailable.")
+                    if st.session_state.gemini_error:
                         st.caption(
                             f"Technical note: Gemini could not be used because of: `{st.session_state.gemini_error}`"
                         )
@@ -508,13 +523,10 @@ def main():
                 if cam_path:
                     st.image(cam_path, caption="DenseNet121", use_container_width=True)
                 else:
-                    st.warning(
-                        "Grad-CAM generation was disabled or failed. Enable it in Advanced options before running the assessment."
-                    )
+                    st.warning("Grad-CAM was not available.")
                 st.markdown("</div>", unsafe_allow_html=True)
 
             # Report tab
-            # ---- Report tab ----
             with tab_report:
                 st.markdown('<div class="gl-card">', unsafe_allow_html=True)
                 st.markdown('<h3 class="gl-section-title">Full Report</h3>', unsafe_allow_html=True)
@@ -530,7 +542,7 @@ def main():
                     confidence = float(p0)
                     final_assessment = "Likely Normal"
 
-                # Image ID (use uploaded filename if present)
+                # Image ID
                 image_id = getattr(uploaded_file, "name", "unknown").replace(" ", "_")
 
                 # Explanation (Gemini preferred)
@@ -546,32 +558,32 @@ def main():
                     "and further ophthalmological evaluation are recommended."
                 )
 
-                # ✅ PREVIEW (so the tab is not empty)
-                st.markdown('<h3 class="gl-section-title">Preview</h3>', unsafe_allow_html=True)
-                c1, c2 = st.columns(2)
-                with c1:
-                    st.image(image, caption="Original fundus", use_container_width=True)
-                with c2:
-                    if cam_path:
-                        st.image(cam_path, caption="Grad-CAM overlay", use_container_width=True)
-                    else:
-                        st.info("Grad-CAM not available for this run.")
-
-                st.markdown('<h3 class="gl-section-title">Text</h3>', unsafe_allow_html=True)
-                st.text_area(
-                    "Report text (preview)",
-                    value=(
-                        f"Image ID: {image_id}\n"
-                        f"Classification (Model): {classification}\n"
-                        f"Confidence Score: {confidence:.3f}\n\n"
-                        f"Explanation:\n{explanation_text}\n\n"
-                        f"Final Assessment: {final_assessment}\n\n"
-                        f"{disclaimer}"
-                    ),
-                    height=260,
+                report_preview = (
+                    f"Image ID: {image_id}\n"
+                    f"Classification (Model): {classification}\n"
+                    f"Confidence Score: {confidence:.3f}\n\n"
+                    f"Explanation:\n{explanation_text}\n\n"
+                    f"Final Assessment: {final_assessment}\n\n"
+                    f"{disclaimer}"
                 )
 
-                # Create PDF bytes EXACT layout
+                left_img_col, right_text_col = st.columns([1.15, 1.85], gap="large")
+
+                with left_img_col:
+                    st.markdown("#### Preview")
+                    img1_col, img2_col = st.columns(2, gap="small")
+                    with img1_col:
+                        st.image(image, caption="Original fundus", use_container_width=True)
+                    with img2_col:
+                        if cam_path:
+                            st.image(cam_path, caption="Grad-CAM overlay", use_container_width=True)
+                        else:
+                            st.info("Grad-CAM not available.")
+
+                with right_text_col:
+                    st.markdown("#### Text")
+                    st.text_area("Report text (preview)", report_preview, height=320)
+
                 pdf_bytes = generate_report_pdf_like_template(
                     image_id=image_id,
                     classification=classification,
@@ -580,7 +592,7 @@ def main():
                     final_assessment=final_assessment,
                     disclaimer=disclaimer,
                     original_pil=image,
-                    gradcam_path=cam_path,  # ok even if None
+                    gradcam_path=cam_path,
                 )
 
                 st.download_button(
@@ -592,8 +604,6 @@ def main():
                 )
 
                 st.markdown("</div>", unsafe_allow_html=True)
-
-
 
         finally:
             st.session_state.is_processing = False
