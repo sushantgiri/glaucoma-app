@@ -20,3 +20,7 @@ hf_models_cache/
 outputs/
 *.pth
 *.onnx
+
+# HF caches (never commit)
+hf_models_cache/
+.huggingface/
