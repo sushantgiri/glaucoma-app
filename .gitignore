@@ -24,3 +24,14 @@ outputs/
 # HF caches (never commit)
 hf_models_cache/
 .huggingface/
+
+# Virtual environments (all variants)
+venv-*/
+**/venv-*/
+.venv/
+**/.venv/
+
+# Screenshots / binary images (HF Spaces-safe)
+images/
+**/images/
+
