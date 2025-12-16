@@ -1,6 +1,6 @@
 import os
 import json
-from typing import Dict, Any
+from typing import Dict, Any, Tuple
 from functools import lru_cache
 
 import gc
@@ -43,6 +43,119 @@ def apply_clahe_rgb(img_np: np.ndarray) -> np.ndarray:
     cl = clahe.apply(l)
     merged = cv2.merge((cl, a, b))
     return cv2.cvtColor(merged, cv2.COLOR_LAB2RGB)
+
+
+def validate_fundus_input(pil_img: Image.Image) -> Tuple[bool, str]:
+    """
+    Lightweight guardrail to reject obvious non-fundus inputs (e.g., text screenshots).
+    This is NOT perfect OOD detection, but greatly reduces embarrassing demo cases.
+
+    Returns:
+        (ok, reason)
+    """
+    img = np.array(pil_img.convert("RGB"))
+
+    # Basic sanity
+    h, w = img.shape[:2]
+    if h < 256 or w < 256:
+        return False, "Invalid image: too small. Please upload a retinal fundus photograph."
+
+    # Normalize analysis to fixed size (fast + consistent thresholds)
+    img_small = cv2.resize(img, (512, 512), interpolation=cv2.INTER_AREA)
+    gray = cv2.cvtColor(img_small, cv2.COLOR_RGB2GRAY)
+
+    # ------------------------------------------------------------
+    # 1) Edge density (screenshots/text typically have lots of edges)
+    # ------------------------------------------------------------
+    edges = cv2.Canny(gray, 60, 120)
+    edge_density = float(np.mean(edges > 0))  # 0..1
+
+    # ------------------------------------------------------------
+    # 2) Text-likeness via small connected components
+    #    - Make a binary image that highlights text-like strokes
+    #    - Count many small blobs => likely document/screenshot
+    # ------------------------------------------------------------
+    # Adaptive threshold handles variable lighting better than fixed threshold
+    thr = cv2.adaptiveThreshold(
+        gray,
+        255,
+        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY_INV,
+        31,
+        7,
+    )
+
+    # Clean tiny noise
+    thr = cv2.medianBlur(thr, 3)
+
+    # Connected components on binarized content
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(thr, connectivity=8)
+
+    # Count "small components" typical of characters (tuned for 512x512)
+    # area range is deliberately loose
+    small_components = 0
+    for i in range(1, num_labels):  # skip background
+        area = stats[i, cv2.CC_STAT_AREA]
+        if 12 <= area <= 900:
+            small_components += 1
+
+    # ------------------------------------------------------------
+    # 3) Fundus FOV cue: center tends to be brighter than borders
+    #    (helps reject flat screenshots / uniform UIs)
+    # ------------------------------------------------------------
+    center = gray[156:356, 156:356]
+    border = np.concatenate(
+        [
+            gray[:60, :].ravel(),
+            gray[-60:, :].ravel(),
+            gray[:, :60].ravel(),
+            gray[:, -60:].ravel(),
+        ]
+    )
+    center_mean = float(np.mean(center))
+    border_mean = float(np.mean(border))
+    center_border_diff = center_mean - border_mean  # fundus often positive
+
+    # ------------------------------------------------------------
+    # 4) Bright document cue: very bright background + low contrast
+    # ------------------------------------------------------------
+    mean_intensity = float(np.mean(gray))
+    std_intensity = float(np.std(gray))
+
+    # ------------------------------------------------------------
+    # Heuristic rules (safe defaults)
+    # ------------------------------------------------------------
+    # Strong document/screenshot signals
+    if mean_intensity > 205 and std_intensity < 40:
+        return False, (
+            "Invalid image: looks like a document/screenshot (very bright, low contrast). "
+            "Please upload a retinal fundus photograph."
+        )
+
+    # Too many edges -> screenshot / UI / text
+    # Fundus images usually have relatively low edge density after resizing
+    if edge_density > 0.14:
+        return False, (
+            "Invalid image: looks like text/screenshot (too many sharp edges). "
+            "Please upload a retinal fundus photograph."
+        )
+
+    # Too many small connected components -> characters/rows/columns
+    if small_components > 420:
+        return False, (
+            "Invalid image: looks like a screenshot/document (detected text-like patterns). "
+            "Please upload a retinal fundus photograph."
+        )
+
+    # If center isn't brighter than border by at least a small amount,
+    # it's often not a fundus-style circular FOV image.
+    if center_border_diff < 6:
+        return False, (
+            "Invalid image: does not resemble a retinal fundus photograph (missing fundus field-of-view cue). "
+            "Please upload a macula-centered fundus image."
+        )
+
+    return True, "ok"
 
 
 def load_config():
@@ -156,6 +269,10 @@ class DenseNet121Predictor:
 
     @torch.no_grad()
     def predict(self, pil_img: Image.Image) -> Dict[str, Any]:
+        ok, reason = validate_fundus_input(pil_img)
+        if not ok:
+            raise ValueError(reason)
+
         x = self._preprocess(pil_img, self.input_size).to(DEVICE)
 
         logits = self.model(x)
@@ -182,6 +299,10 @@ class DenseNet121Predictor:
         - smaller cam_side (256)
         - uses predicted class passed from Streamlit (no extra forward)
         """
+        ok, reason = validate_fundus_input(pil_img)
+        if not ok:
+            raise ValueError(reason)
+
         os.makedirs(output_dir, exist_ok=True)
 
         cam_side = 256  # 🔥 faster than 384
