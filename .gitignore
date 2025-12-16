@@ -6,6 +6,13 @@ attn_maps/
 gradcams/
 models/*.pth
 
+# HF / model caches (never commit)
+hf_models_cache/
+**/hf_models_cache/
+.huggingface/
+**/.huggingface/
+*.pycs
+
 # Streamlit secrets
 .streamlit/secrets.toml
 .streamlit/secrets.toml.*
