@@ -200,8 +200,7 @@ class DenseNet121Predictor:
             grayscale_cam = cam(input_tensor=input_tensor, targets=targets)[0]
 
             cam_img = show_cam_on_image(img_rgb, grayscale_cam, use_rgb=True)
-
-            save_path = os.path.join(output_dir, "densenet121_gradcam.png")
+            save_path = os.path.join(output_dir, f"densenet121_gradcam_{os.getpid()}.png")
             Image.fromarray(cam_img).save(save_path)
             return save_path
 
