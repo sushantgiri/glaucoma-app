@@ -35,3 +35,9 @@ venv-*/
 images/
 **/images/
 
+
+# Streamlit secrets
+.streamlit/secrets.toml
+
+# Streamlit secrets
+.streamlit/secrets.toml
