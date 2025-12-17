@@ -41,3 +41,35 @@ images/
 
 # Streamlit secrets
 .streamlit/secrets.toml
+
+# Generated artifacts
+optic_disc/
+gradcams/
+attn_maps/
+__pycache__/
+*.pyc
+.DS_Store
+
+# Generated artifacts
+optic_disc/
+gradcams/
+attn_maps/
+__pycache__/
+*.pyc
+.DS_Store
+
+# Generated artifacts
+optic_disc/
+gradcams/
+attn_maps/
+__pycache__/
+*.pyc
+.DS_Store
+
+# Generated artifacts
+optic_disc/
+gradcams/
+attn_maps/
+__pycache__/
+*.pyc
+.DS_Store
