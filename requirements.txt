@@ -1,5 +1,5 @@
 # Core app
-streamlit==1.50.0
+streamlit>=1.25
 
 # PyTorch stack
 torch==2.2.2
